@@ -1,26 +1,10 @@
-{
-  "name": "flow-commerce",
-  "version": "0.1.0",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
-  "dependencies": {
-    "@supabase/ssr": "^0.5.0",
-    "@supabase/supabase-js": "^2.45.0",
-    "next": "14.2.5",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  },
-  "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
-    "postcss": "^8",
-    "tailwindcss": "^3.4.1",
-    "typescript": "^5"
-  }
+export default function Page() {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-zinc-950 text-white">
+      <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm">
+        <h1 className="text-4xl font-bold tracking-tight mb-4">Flow Commerce</h1>
+        <p className="text-zinc-400">Multi-tenant e-commerce platform is live and running successfully!</p>
+      </div>
+    </main>
+  );
 }

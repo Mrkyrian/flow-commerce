@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { createClient } from '@/utils/supabase/client'
+import { getSupabaseConfigError } from '@/utils/supabase/env'
 import { useRouter } from 'next/navigation'
 
 export default function LoginPage() {
@@ -10,25 +11,31 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
   const router = useRouter()
-  const supabase = createClient()
+  const configError = getSupabaseConfigError()
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setMessage('')
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    if (error) {
-      setMessage(error.message)
+      if (error) {
+        setMessage(error.message)
+        setLoading(false)
+      } else {
+        setMessage('Success! Redirecting...')
+        router.push('/')
+        router.refresh()
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Unable to reach Supabase.')
       setLoading(false)
-    } else {
-      setMessage('Success! Redirecting...')
-      router.push('/')
-      router.refresh()
     }
   }
 
@@ -36,15 +43,20 @@ export default function LoginPage() {
     setLoading(true)
     setMessage('')
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    })
+    try {
+      const supabase = createClient()
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+      })
 
-    if (error) {
-      setMessage(error.message)
-    } else {
-      setMessage('Check your email for the confirmation link!')
+      if (error) {
+        setMessage(error.message)
+      } else {
+        setMessage('Check your email for the confirmation link!')
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Unable to reach Supabase.')
     }
     setLoading(false)
   }
@@ -54,6 +66,13 @@ export default function LoginPage() {
       <div className="max-w-md w-full bg-gray-800 p-8 rounded-lg shadow-lg border border-gray-700">
         <h1 className="text-2xl font-bold mb-6 text-center text-emerald-400">Flow Commerce Auth</h1>
         
+        {configError && (
+          <div className="mb-4 p-3 bg-amber-900/40 text-sm text-amber-200 rounded border border-amber-700/60">
+            <strong className="block font-semibold">Supabase is not configured</strong>
+            {configError}
+          </div>
+        )}
+
         {message && (
           <div className="mb-4 p-3 bg-gray-700 text-sm text-center rounded border border-gray-600">
             {message}
@@ -87,7 +106,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || configError !== null}
             className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 rounded font-semibold transition duration-200 disabled:opacity-50"
           >
             {loading ? 'Processing...' : 'Sign In'}
@@ -96,7 +115,7 @@ export default function LoginPage() {
           <button
             type="button"
             onClick={handleSignUp}
-            disabled={loading}
+            disabled={loading || configError !== null}
             className="w-full py-2 bg-gray-700 hover:bg-gray-600 rounded font-semibold transition duration-200 text-gray-300 disabled:opacity-50"
           >
             Create Account (Sign Up)

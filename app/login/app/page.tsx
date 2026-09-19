@@ -1,7 +1,20 @@
 import { createClient } from '@/utils/supabase/server'
+import { getSupabaseConfigError } from '@/utils/supabase/env'
 import { redirect } from 'next/navigation'
 
 export default async function DashboardPage() {
+  const configError = getSupabaseConfigError()
+  if (configError) {
+    return (
+      <main className="min-h-screen bg-gray-900 text-white p-6 md:p-8">
+        <div className="max-w-2xl mx-auto bg-amber-900/40 border border-amber-700/60 rounded-lg p-6">
+          <h1 className="text-xl font-bold text-amber-200">Supabase is not configured</h1>
+          <p className="mt-2 text-sm text-amber-100">{configError}</p>
+        </div>
+      </main>
+    )
+  }
+
   const supabase = await createClient()
 
   const { data: { user }, error: userError } = await supabase.auth.getUser()

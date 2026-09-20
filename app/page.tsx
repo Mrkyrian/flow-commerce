@@ -825,10 +825,18 @@ export default function StorefrontPage() {
               </a>
 
               <Link
-                href="/dashboard"
-                className="px-5 py-3 bg-neutral-950/80 hover:bg-neutral-800 text-neutral-200 border border-neutral-700/80 font-semibold text-xs rounded-xl transition"
+                href="/signup"
+                className="px-5 py-3 bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 hover:text-white border border-emerald-800/80 font-semibold text-xs rounded-xl transition flex items-center space-x-2 shadow-sm"
               >
-                Open Merchant Workspace
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Launch Your Store</span>
+              </Link>
+
+              <Link
+                href="/dashboard"
+                className="px-5 py-3 bg-neutral-950/80 hover:bg-neutral-800 text-neutral-300 border border-neutral-700/80 font-semibold text-xs rounded-xl transition"
+              >
+                Merchant Portal
               </Link>
             </div>
           </div>

@@ -183,46 +183,77 @@ export default function DashboardPage() {
         setLoading(true)
         const { data: { user: authUser }, error: authError } = await supabase.auth.getUser()
 
-        if (authError || !authUser) {
+        // Check local storage for newly registered tenant
+        let localTenant: any = null
+        if (typeof window !== 'undefined') {
+          try {
+            const raw = localStorage.getItem('flow_current_tenant')
+            if (raw) localTenant = JSON.parse(raw)
+          } catch (e) {
+            console.warn('Could not parse local tenant:', e)
+          }
+        }
+
+        if ((authError || !authUser) && !localTenant) {
           router.push('/login')
           return
         }
 
-        setUser(authUser)
+        const effectiveUser = authUser || {
+          id: 'merchant-owner',
+          email: localTenant?.owner_email || localStorage.getItem('flow_user_email') || 'merchant@flowcommerce.local',
+        }
+        setUser(effectiveUser)
 
-        // Fetch tenant member info and joined tenant details
-        const { data: membership, error: memberError } = await supabase
-          .from('tenant_members')
-          .select('tenant_id, role, tenants(id, name, description, industry_type, currency)')
-          .eq('user_id', authUser.id)
-          .maybeSingle()
+        let resolvedTenant: Tenant | null = null
 
-        if (memberError || !membership?.tenants) {
-          router.push('/onboarding')
+        if (authUser) {
+          // Fetch tenant member info and joined tenant details from Supabase
+          const { data: membership } = await supabase
+            .from('tenant_members')
+            .select('tenant_id, role, tenants(id, name, description, industry_type, currency)')
+            .eq('user_id', authUser.id)
+            .maybeSingle()
+
+          if (membership?.tenants) {
+            const t = membership.tenants as any
+            resolvedTenant = {
+              id: t.id || membership.tenant_id,
+              name: t.name || 'My Store',
+              description: t.description || '',
+              industry_type: t.industry_type || 'Retail',
+              currency: t.currency || 'USD',
+            }
+          }
+        }
+
+        if (!resolvedTenant && localTenant) {
+          resolvedTenant = {
+            id: localTenant.id,
+            name: localTenant.name || 'My Store',
+            description: localTenant.description || '',
+            industry_type: localTenant.industry_type || 'Fashion',
+            currency: localTenant.currency || 'NGN',
+          }
+        }
+
+        if (!resolvedTenant) {
+          router.push('/signup')
           return
         }
 
-        const t = membership.tenants as any
-        const currentTenant: Tenant = {
-          id: t.id || membership.tenant_id,
-          name: t.name || 'My Store',
-          description: t.description || '',
-          industry_type: t.industry_type || 'Retail',
-          currency: t.currency || 'USD',
-        }
-
-        setTenant(currentTenant)
+        setTenant(resolvedTenant)
         setSettingsForm({
-          name: currentTenant.name,
-          description: currentTenant.description || '',
-          industry_type: currentTenant.industry_type || 'E-Commerce / Retail',
-          currency: currentTenant.currency || 'USD',
+          name: resolvedTenant.name,
+          description: resolvedTenant.description || '',
+          industry_type: resolvedTenant.industry_type || 'Fashion',
+          currency: resolvedTenant.currency || 'NGN',
         })
 
         // Fetch products, orders, and transactions for this tenant
-        fetchProducts(currentTenant.id)
-        fetchOrders(currentTenant.id)
-        fetchTransactions(currentTenant.id)
+        fetchProducts(resolvedTenant.id)
+        fetchOrders(resolvedTenant.id)
+        fetchTransactions(resolvedTenant.id)
       } catch (err) {
         console.error('Failed to initialize vendor dashboard:', err)
       } finally {

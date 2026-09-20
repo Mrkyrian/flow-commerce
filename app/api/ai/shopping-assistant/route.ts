@@ -112,7 +112,7 @@ export async function POST(req: NextRequest) {
         .join('\n')
 
       const prompt = `You are the friendly, knowledgeable AI Shopping Assistant for Flow Commerce.
-Help the customer find the right products, explain specifications, compare items, check prices/stock, and make personalized suggestions.
+Help the customer find the right products, explain specifications, compare items, check prices/stock, and answer store policy questions (shipping: free over $150, standard $12; returns: 30-day effortless returns; tracking: real-time package tracking with order references).
 
 CURRENT STORE INVENTORY:
 ${JSON.stringify(inventorySummary, null, 2)}
@@ -125,11 +125,11 @@ LATEST CUSTOMER QUERY:
 
 INSTRUCTIONS:
 1. Provide a concise, engaging, and helpful response. If recommending products, refer to exact names and prices from the store inventory above.
-2. In 'recommendedProductIds', include the exact string IDs of products directly relevant to the user's question from the provided inventory (maximum 4 products).
+2. In 'recommendedProductIds', include the exact string IDs of products directly relevant to the user's question from the provided inventory (maximum 4 products). If the query is about policies or tracking, this can be empty.
 3. In 'suggestedFollowUps', provide 2 or 3 short follow-up questions the shopper might want to ask next.`
 
       const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+        model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
           responseMimeType: 'application/json',

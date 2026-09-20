@@ -17,18 +17,23 @@ export default function LoginPage() {
     setLoading(true)
     setMessage('')
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      })
 
-    if (error) {
-      setMessage(error.message)
+      if (error) {
+        setMessage(error.message)
+        setLoading(false)
+      } else {
+        setMessage('Success! Redirecting...')
+        router.push('/login/app')
+        router.refresh()
+      }
+    } catch (err: any) {
+      setMessage(err?.message || 'Authentication error')
       setLoading(false)
-    } else {
-      setMessage('Success! Redirecting...')
-      router.push('/')
-      router.refresh()
     }
   }
 
@@ -36,15 +41,19 @@ export default function LoginPage() {
     setLoading(true)
     setMessage('')
 
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-    })
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+      })
 
-    if (error) {
-      setMessage(error.message)
-    } else {
-      setMessage('Check your email for the confirmation link!')
+      if (error) {
+        setMessage(error.message)
+      } else {
+        setMessage('Check your email for the confirmation link!')
+      }
+    } catch (err: any) {
+      setMessage(err?.message || 'Registration error')
     }
     setLoading(false)
   }

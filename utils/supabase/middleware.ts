@@ -1,22 +1,22 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isValidSupabaseUrl, getSafeSupabaseConfig } from './check-env'
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
   })
 
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const { isConfigured, url, anonKey } = getSafeSupabaseConfig()
 
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!isConfigured || !isValidSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL)) {
     return supabaseResponse
   }
 
   try {
     const supabase = createServerClient(
-      supabaseUrl,
-      supabaseAnonKey,
+      url,
+      anonKey,
       {
         cookies: {
           getAll() {
@@ -36,10 +36,11 @@ export async function updateSession(request: NextRequest) {
     )
 
     await supabase.auth.getUser()
-  } catch (error) {
-    console.warn('Supabase middleware error:', error)
+  } catch {
+    // Silently fall through if credentials are not yet initialized or network error occurs
   }
 
   return supabaseResponse
 }
+
 

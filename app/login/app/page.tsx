@@ -4,17 +4,32 @@ import { redirect } from 'next/navigation'
 export default async function DashboardPage() {
   const supabase = await createClient()
 
-  const { data: { user }, error: userError } = await supabase.auth.getUser()
-  if (userError || !user) {
+  let user: any = null
+  try {
+    const { data: { user: authUser }, error: userError } = await supabase.auth.getUser()
+    if (!userError && authUser) {
+      user = authUser
+    }
+  } catch {
+    user = null
+  }
+
+  if (!user) {
     redirect('/login')
   }
 
   // Fetch tenant member info and joined tenant details securely via RLS
-  const { data: membership } = await supabase
-    .from('tenant_members')
-    .select('tenant_id, role, tenants(name, industry_type, currency)')
-    .eq('user_id', user.id)
-    .single()
+  let membership: any = null
+  try {
+    const { data } = await supabase
+      .from('tenant_members')
+      .select('tenant_id, role, tenants(name, industry_type, currency)')
+      .eq('user_id', user.id)
+      .single()
+    membership = data
+  } catch {
+    membership = null
+  }
 
   const tenant = membership?.tenants as any
 
@@ -61,4 +76,5 @@ export default async function DashboardPage() {
     </main>
   )
 }
+
 

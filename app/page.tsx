@@ -5,6 +5,7 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { createClient } from '@/utils/supabase/client'
 import OrderTrackingModal from '@/components/OrderTrackingModal'
+import AiShoppingAssistant from '@/components/AiShoppingAssistant'
 import {
   ShoppingBag,
   Search,
@@ -1487,6 +1488,14 @@ export default function StorefrontPage() {
         isOpen={isTrackingModalOpen}
         onClose={() => setIsTrackingModalOpen(false)}
         initialQuery={trackingModalQuery}
+      />
+
+      {/* ===================== AI SHOPPING ASSISTANT ===================== */}
+      <AiShoppingAssistant
+        products={products}
+        currency="$"
+        onAddToCart={(product) => addToCart(product, 1)}
+        onQuickView={(product) => setQuickViewProduct(product)}
       />
 
     </div>

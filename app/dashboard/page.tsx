@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import AdminProductManager, { AdminProduct } from '@/components/AdminProductManager'
 import {
   Package,
   ShoppingBag,
@@ -48,13 +49,15 @@ interface Product {
   id: string
   tenant_id?: string
   name: string
-  description?: string
+  description?: string | null
   price: number
   category?: string
   stock_quantity?: number
   stock?: number
   created_at?: string
   status?: string
+  image_url?: string | null
+  tenants?: { name: string }
 }
 
 interface OrderItem {
@@ -114,21 +117,6 @@ export default function DashboardPage() {
   // Products State
   const [products, setProducts] = useState<Product[]>([])
   const [productsLoading, setProductsLoading] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [selectedCategory, setSelectedCategory] = useState<string>('all')
-
-  // Add Product Modal State
-  const [isModalOpen, setIsModalOpen] = useState(false)
-  const [submittingProduct, setSubmittingProduct] = useState(false)
-  const [productFormError, setProductFormError] = useState('')
-  const [formSuccess, setFormSuccess] = useState('')
-  const [productForm, setProductForm] = useState({
-    name: '',
-    description: '',
-    price: '',
-    category: 'General',
-    stock_quantity: '10',
-  })
 
   // Orders & Order Items State
   const [orders, setOrders] = useState<Order[]>([])
@@ -347,132 +335,19 @@ export default function DashboardPage() {
     }
   }
 
-  // Handle Add Product Submit
-  const handleAddProduct = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setProductFormError('')
-    setFormSuccess('')
-
-    if (!productForm.name.trim()) {
-      setProductFormError('Product name is required.')
-      return
-    }
-
-    const priceNum = parseFloat(productForm.price)
-    if (isNaN(priceNum) || priceNum < 0) {
-      setProductFormError('Please enter a valid non-negative price.')
-      return
-    }
-
-    const stockNum = parseInt(productForm.stock_quantity, 10)
-    if (isNaN(stockNum) || stockNum < 0) {
-      setProductFormError('Please enter a valid stock quantity.')
-      return
-    }
-
-    setSubmittingProduct(true)
-
-    try {
-      const tenantId = tenant?.id
-
-      const newProductPayload = {
-        tenant_id: tenantId,
-        name: productForm.name.trim(),
-        description: productForm.description.trim() || null,
-        price: priceNum,
-        category: productForm.category.trim() || 'General',
-        stock_quantity: stockNum,
-        created_at: new Date().toISOString(),
-      }
-
-      let { data, error } = await supabase
-        .from('products')
-        .insert([newProductPayload])
-        .select()
-        .single()
-
-      if (error) {
-        const fallbackPayload = {
-          tenant_id: tenantId,
-          name: productForm.name.trim(),
-          description: productForm.description.trim() || null,
-          price: priceNum,
-          category: productForm.category.trim() || 'General',
-          stock: stockNum,
-        }
-
-        const fallbackResult = await supabase
-          .from('products')
-          .insert([fallbackPayload])
-          .select()
-          .single()
-
-        if (fallbackResult.error) {
-          const minimalPayload = {
-            name: productForm.name.trim(),
-            description: productForm.description.trim() || null,
-            price: priceNum,
-          }
-          const minResult = await supabase
-            .from('products')
-            .insert([minimalPayload])
-            .select()
-            .single()
-
-          if (minResult.error) {
-            throw fallbackResult.error
-          }
-          data = minResult.data
-        } else {
-          data = fallbackResult.data
-        }
-      }
-
-      setFormSuccess('Product created successfully!')
-      
-      const addedProduct: Product = data || {
-        id: `prod-${Date.now()}`,
-        tenant_id: tenantId,
-        name: productForm.name.trim(),
-        description: productForm.description.trim(),
-        price: priceNum,
-        category: productForm.category.trim() || 'General',
-        stock_quantity: stockNum,
-        created_at: new Date().toISOString(),
-      }
-
-      setProducts((prev) => [addedProduct, ...prev])
-
-      setTimeout(() => {
-        setIsModalOpen(false)
-        setFormSuccess('')
-        setProductForm({
-          name: '',
-          description: '',
-          price: '',
-          category: 'General',
-          stock_quantity: '10',
-        })
-        if (tenantId) {
-          fetchProducts(tenantId)
-        }
-      }, 600)
-    } catch (err: any) {
-      setProductFormError(err?.message || 'Failed to save product to Supabase.')
-    } finally {
-      setSubmittingProduct(false)
-    }
+  // Product CRUD Handlers for AdminProductManager
+  const handleProductCreated = (newProd: AdminProduct) => {
+    setProducts((prev) => [newProd as Product, ...prev])
   }
 
-  // Handle Delete Product
-  const handleDeleteProduct = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this product?')) return
-    try {
-      await supabase.from('products').delete().eq('id', id)
-      setProducts((prev) => prev.filter((p) => p.id !== id))
-    } catch (err) {
-      console.error('Delete error:', err)
-    }
+  const handleProductUpdated = (updatedProd: AdminProduct) => {
+    setProducts((prev) =>
+      prev.map((p) => (p.id === updatedProd.id ? { ...p, ...updatedProd } : p))
+    )
+  }
+
+  const handleProductDeleted = (id: string) => {
+    setProducts((prev) => prev.filter((p) => p.id !== id))
   }
 
   // Handle Save Settings
@@ -517,26 +392,6 @@ export default function DashboardPage() {
       setSavingSettings(false)
     }
   }
-
-  // Filtered Products
-  const categories = useMemo(() => {
-    const set = new Set<string>()
-    products.forEach((p) => {
-      if (p.category) set.add(p.category)
-    })
-    return ['all', ...Array.from(set)]
-  }, [products])
-
-  const filteredProducts = useMemo(() => {
-    return products.filter((p) => {
-      const matchesSearch =
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (p.description && p.description.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (p.category && p.category.toLowerCase().includes(searchQuery.toLowerCase()))
-      const matchesCategory = selectedCategory === 'all' || p.category === selectedCategory
-      return matchesSearch && matchesCategory
-    })
-  }, [products, searchQuery, selectedCategory])
 
   // Total Revenue Calculated from Transactions or Orders
   const totalRevenue = useMemo(() => {
@@ -767,21 +622,6 @@ export default function DashboardPage() {
             >
               <RefreshCw className="w-4 h-4" />
             </button>
-
-            {activeTab === 'products' && (
-              <button
-                id="open-add-product-btn"
-                onClick={() => {
-                  setProductFormError('')
-                  setFormSuccess('')
-                  setIsModalOpen(true)
-                }}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition flex items-center space-x-2 shadow-lg shadow-emerald-950"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add Product</span>
-              </button>
-            )}
           </div>
         </header>
 
@@ -790,177 +630,16 @@ export default function DashboardPage() {
 
           {/* ===================== TAB 1: PRODUCTS ===================== */}
           {activeTab === 'products' && (
-            <div className="space-y-6">
-              
-              {/* Quick Metrics Bar */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-neutral-400 font-medium">Total Products</p>
-                    <p className="text-2xl font-bold text-white mt-1">{products.length}</p>
-                  </div>
-                  <div className="w-10 h-10 bg-emerald-950 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-800/60">
-                    <Boxes className="w-5 h-5" />
-                  </div>
-                </div>
-
-                <div className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-neutral-400 font-medium">Total Orders Received</p>
-                    <p className="text-2xl font-bold text-emerald-400 mt-1">{orders.length}</p>
-                  </div>
-                  <div className="w-10 h-10 bg-neutral-800 text-neutral-300 rounded-xl flex items-center justify-center border border-neutral-700">
-                    <ShoppingBag className="w-5 h-5" />
-                  </div>
-                </div>
-
-                <div className="bg-neutral-900 border border-neutral-800 p-5 rounded-2xl flex items-center justify-between">
-                  <div>
-                    <p className="text-xs text-neutral-400 font-medium">Recorded Volume</p>
-                    <p className="text-2xl font-bold text-white mt-1">
-                      {tenant?.currency || '$'} {totalRevenue.toFixed(2)}
-                    </p>
-                  </div>
-                  <div className="w-10 h-10 bg-emerald-950 text-emerald-400 rounded-xl flex items-center justify-center border border-emerald-800/60">
-                    <TrendingUp className="w-5 h-5" />
-                  </div>
-                </div>
-              </div>
-
-              {/* Filters and Search Bar */}
-              <div className="bg-neutral-900 border border-neutral-800 p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-3">
-                <div className="relative w-full md:w-80">
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-neutral-500" />
-                  <input
-                    id="search-products-input"
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search product name or category..."
-                    className="w-full pl-9 pr-4 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2 w-full md:w-auto">
-                  <div className="flex items-center space-x-1.5 text-xs text-neutral-400">
-                    <Filter className="w-3.5 h-3.5" />
-                    <span>Category:</span>
-                  </div>
-                  <select
-                    id="category-filter"
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="bg-neutral-950 border border-neutral-800 text-neutral-200 text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-emerald-500"
-                  >
-                    {categories.map((c) => (
-                      <option key={c} value={c}>
-                        {c === 'all' ? 'All Categories' : c}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Products Table */}
-              <div className="bg-neutral-900 border border-neutral-800 rounded-2xl overflow-hidden shadow-sm">
-                {productsLoading ? (
-                  <div className="py-12 flex flex-col items-center justify-center space-y-3">
-                    <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-                    <span className="text-xs text-neutral-400">Syncing products from Supabase...</span>
-                  </div>
-                ) : filteredProducts.length === 0 ? (
-                  <div className="py-16 px-4 text-center space-y-4">
-                    <div className="w-12 h-12 mx-auto bg-neutral-800 border border-neutral-700 rounded-2xl flex items-center justify-center text-neutral-500">
-                      <Package className="w-6 h-6" />
-                    </div>
-                    <div>
-                      <h3 className="text-base font-semibold text-white">No products found</h3>
-                      <p className="text-xs text-neutral-400 max-w-sm mx-auto mt-1">
-                        Add items to your catalog to display them on the storefront.
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setProductFormError('')
-                        setIsModalOpen(true)
-                      }}
-                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold inline-flex items-center space-x-1.5 shadow"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add First Product</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs text-neutral-300">
-                      <thead className="bg-neutral-950/60 text-[11px] uppercase tracking-wider text-neutral-400 border-b border-neutral-800 font-semibold">
-                        <tr>
-                          <th className="px-5 py-3.5">Product Name</th>
-                          <th className="px-5 py-3.5">Category</th>
-                          <th className="px-5 py-3.5">Price</th>
-                          <th className="px-5 py-3.5">Stock</th>
-                          <th className="px-5 py-3.5">Status</th>
-                          <th className="px-5 py-3.5 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-neutral-800/60">
-                        {filteredProducts.map((product) => {
-                          const stock = product.stock_quantity ?? product.stock ?? 0
-                          const isLowStock = stock <= 3
-
-                          return (
-                            <tr key={product.id} className="hover:bg-neutral-800/40 transition-colors">
-                              <td className="px-5 py-3.5">
-                                <div className="font-semibold text-white">{product.name}</div>
-                                {product.description && (
-                                  <div className="text-[11px] text-neutral-500 truncate max-w-xs mt-0.5">
-                                    {product.description}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="px-5 py-3.5">
-                                <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-neutral-800 text-neutral-300 border border-neutral-700">
-                                  <Tag className="w-3 h-3 mr-1 text-neutral-400" />
-                                  {product.category || 'General'}
-                                </span>
-                              </td>
-                              <td className="px-5 py-3.5 font-semibold text-white">
-                                {tenant?.currency || '$'} {Number(product.price).toFixed(2)}
-                              </td>
-                              <td className="px-5 py-3.5">
-                                <span className={`font-medium ${isLowStock ? 'text-amber-400 font-bold' : 'text-neutral-200'}`}>
-                                  {stock} units
-                                </span>
-                              </td>
-                              <td className="px-5 py-3.5">
-                                <span
-                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                                    stock > 0
-                                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/50'
-                                      : 'bg-red-950 text-red-300 border border-red-800/50'
-                                  }`}
-                                >
-                                  {stock > 0 ? 'In Stock' : 'Out of Stock'}
-                                </span>
-                              </td>
-                              <td className="px-5 py-3.5 text-right">
-                                <button
-                                  onClick={() => handleDeleteProduct(product.id)}
-                                  title="Delete product"
-                                  className="p-1.5 text-neutral-500 hover:text-red-400 hover:bg-neutral-800 rounded-lg transition"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </div>
+            <AdminProductManager
+              products={products as AdminProduct[]}
+              tenantId={tenant?.id}
+              currency={tenant?.currency || 'USD'}
+              onProductCreated={handleProductCreated}
+              onProductUpdated={handleProductUpdated}
+              onProductDeleted={handleProductDeleted}
+              onRefresh={() => tenant?.id && fetchProducts(tenant.id)}
+              isLoading={productsLoading}
+            />
           )}
 
           {/* ===================== TAB 2: ORDERS & ORDER ITEMS ===================== */}
@@ -1396,170 +1075,6 @@ export default function DashboardPage() {
             </div>
           </div>
         )}
-
-      {/* ===================== ADD NEW PRODUCT MODAL ===================== */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="max-w-lg w-full bg-neutral-900 border border-neutral-700 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-            
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-900">
-              <div className="flex items-center space-x-2.5">
-                <div className="w-8 h-8 bg-emerald-950 border border-emerald-800 text-emerald-400 rounded-xl flex items-center justify-center">
-                  <Plus className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-white">Add New Product</h3>
-                  <p className="text-[11px] text-neutral-400">Add an item to your Supabase catalog inventory</p>
-                </div>
-              </div>
-              <button
-                id="close-product-modal-btn"
-                onClick={() => setIsModalOpen(false)}
-                className="text-neutral-400 hover:text-white p-1 rounded-lg hover:bg-neutral-800 transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Form */}
-            <form onSubmit={handleAddProduct} className="p-6 space-y-4 overflow-y-auto">
-              
-              {productFormError && (
-                <div className="p-3 bg-red-950 text-red-300 border border-red-800/60 rounded-xl text-xs flex items-center space-x-2">
-                  <AlertCircle className="w-4 h-4 shrink-0" />
-                  <span>{productFormError}</span>
-                </div>
-              )}
-
-              {formSuccess && (
-                <div className="p-3 bg-emerald-950 text-emerald-300 border border-emerald-800/60 rounded-xl text-xs flex items-center space-x-2">
-                  <CheckCircle className="w-4 h-4 shrink-0" />
-                  <span>{formSuccess}</span>
-                </div>
-              )}
-
-              {/* Product Name */}
-              <div>
-                <label htmlFor="prod-name" className="block text-xs font-semibold text-neutral-300 mb-1.5">
-                  Product Name <span className="text-emerald-400">*</span>
-                </label>
-                <input
-                  id="prod-name"
-                  type="text"
-                  value={productForm.name}
-                  onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
-                  required
-                  placeholder="e.g. Wireless Noise-Cancelling Headphones"
-                  className="w-full px-3.5 py-2.5 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              {/* Description */}
-              <div>
-                <label htmlFor="prod-desc" className="block text-xs font-semibold text-neutral-300 mb-1.5">
-                  Product Description
-                </label>
-                <textarea
-                  id="prod-desc"
-                  rows={3}
-                  value={productForm.description}
-                  onChange={(e) => setProductForm({ ...productForm, description: e.target.value })}
-                  placeholder="Key features, specifications, and details for shoppers..."
-                  className="w-full px-3.5 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 resize-none"
-                />
-              </div>
-
-              {/* Price & Stock Quantity */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="prod-price" className="block text-xs font-semibold text-neutral-300 mb-1.5">
-                    Price ({tenant?.currency || 'USD'}) <span className="text-emerald-400">*</span>
-                  </label>
-                  <input
-                    id="prod-price"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={productForm.price}
-                    onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
-                    required
-                    placeholder="49.99"
-                    className="w-full px-3.5 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-
-                <div>
-                  <label htmlFor="prod-stock" className="block text-xs font-semibold text-neutral-300 mb-1.5">
-                    Stock Quantity <span className="text-emerald-400">*</span>
-                  </label>
-                  <input
-                    id="prod-stock"
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={productForm.stock_quantity}
-                    onChange={(e) => setProductForm({ ...productForm, stock_quantity: e.target.value })}
-                    required
-                    placeholder="25"
-                    className="w-full px-3.5 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500"
-                  />
-                </div>
-              </div>
-
-              {/* Category */}
-              <div>
-                <label htmlFor="prod-category" className="block text-xs font-semibold text-neutral-300 mb-1.5">
-                  Category
-                </label>
-                <select
-                  id="prod-category"
-                  value={productForm.category}
-                  onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
-                  className="w-full px-3.5 py-2 bg-neutral-950 border border-neutral-800 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500"
-                >
-                  <option value="General">General Merchandise</option>
-                  <option value="Audio & Tech">Audio & Tech</option>
-                  <option value="Accessories">Accessories & Jewelry</option>
-                  <option value="Fashion & Bags">Fashion & Bags</option>
-                  <option value="Home & Living">Home & Living</option>
-                  <option value="Beauty & Wellness">Beauty & Wellness</option>
-                </select>
-              </div>
-
-              {/* Modal Actions */}
-              <div className="pt-4 border-t border-neutral-800 flex items-center justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 rounded-xl text-xs font-medium transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  id="submit-product-btn"
-                  type="submit"
-                  disabled={submittingProduct}
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-xs font-semibold transition disabled:opacity-50 flex items-center space-x-2 shadow-lg shadow-emerald-950"
-                >
-                  {submittingProduct ? (
-                    <>
-                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      <span>Saving...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Save Product</span>
-                    </>
-                  )}
-                </button>
-              </div>
-
-            </form>
-          </div>
-        </div>
-      )}
 
     </div>
   )

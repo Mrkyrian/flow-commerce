@@ -49,6 +49,9 @@ interface AiShoppingAssistantProps {
   currency?: string
   onAddToCart: (product: StorefrontProduct) => void
   onQuickView?: (product: StorefrontProduct) => void
+  isOpen?: boolean
+  onClose?: () => void
+  onOpenChange?: (open: boolean) => void
 }
 
 const STARTER_PROMPTS = [
@@ -63,11 +66,23 @@ export default function AiShoppingAssistant({
   currency = '$',
   onAddToCart,
   onQuickView,
+  isOpen: controlledIsOpen,
+  onClose: controlledOnClose,
+  onOpenChange,
 }: AiShoppingAssistantProps) {
-  const [isOpen, setIsOpen] = useState(false)
+  const [isAiChatOpen, setIsAiChatOpen] = useState(false)
   const [inputMessage, setInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [addedProductId, setAddedProductId] = useState<string | null>(null)
+
+  // Sync with controlled prop if provided
+  const isChatOpen = controlledIsOpen !== undefined ? controlledIsOpen : isAiChatOpen
+
+  const setChatOpen = (open: boolean) => {
+    setIsAiChatOpen(open)
+    if (onOpenChange) onOpenChange(open)
+    if (!open && controlledOnClose) controlledOnClose()
+  }
 
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
@@ -87,11 +102,11 @@ export default function AiShoppingAssistant({
   }
 
   useEffect(() => {
-    if (isOpen) {
+    if (isChatOpen) {
       scrollToBottom()
       setTimeout(() => inputRef.current?.focus(), 150)
     }
-  }, [isOpen, messages])
+  }, [isChatOpen, messages])
 
   const handleSendMessage = async (textToSend?: string) => {
     const text = (textToSend || inputMessage).trim()
@@ -234,10 +249,10 @@ export default function AiShoppingAssistant({
     <>
       {/* ===================== FLOATING TRIGGER BUTTON ===================== */}
       <div className="fixed bottom-6 right-6 z-40">
-        {!isOpen && (
+        {!isChatOpen && (
           <button
             id="ai-shopping-assistant-toggle"
-            onClick={() => setIsOpen(true)}
+            onClick={() => setChatOpen(true)}
             className="group relative flex items-center gap-2.5 px-4 py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-full shadow-2xl shadow-emerald-950/60 border border-emerald-400/30 hover:scale-105 active:scale-95 transition-all duration-300"
             title="Open AI Shopping Concierge"
           >
@@ -260,47 +275,60 @@ export default function AiShoppingAssistant({
         )}
       </div>
 
-      {/* ===================== AI CHAT DRAWER / POPUP ===================== */}
-      {isOpen && (
-        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 w-[calc(100vw-2rem)] sm:w-[420px] max-h-[85vh] h-[640px] bg-neutral-900 border border-neutral-700/80 rounded-3xl shadow-2xl shadow-black/80 flex flex-col overflow-hidden animate-scaleIn backdrop-blur-md">
-          
-          {/* Header */}
-          <div className="px-5 py-4 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-950">
-                <Sparkles className="w-4 h-4 text-white" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-white">Flow AI Concierge</h3>
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/90 text-emerald-400 border border-emerald-800">
-                    Live
-                  </span>
-                </div>
-                <p className="text-[11px] text-neutral-400">
-                  Grounded in {products.length} catalog products
-                </p>
-              </div>
-            </div>
+      {/* ===================== AI CHAT DRAWER & BACKDROP ===================== */}
+      {isChatOpen && (
+        <>
+          {/* Backdrop Overlay with z-50 and click-to-close */}
+          <div
+            id="ai-assistant-backdrop"
+            onClick={() => setChatOpen(false)}
+            className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 transition-opacity animate-fadeIn"
+            aria-label="Close AI Assistant Overlay"
+          />
 
-            <div className="flex items-center space-x-1">
-              <button
-                onClick={handleClearChat}
-                className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition"
-                title="Reset conversation"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-              </button>
-              <button
-                id="close-ai-assistant"
-                onClick={() => setIsOpen(false)}
-                className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition"
-                title="Close chat"
-              >
-                <X className="w-4 h-4" />
-              </button>
+          {/* AI Chat Drawer / Popup Window on top */}
+          <div
+            id="ai-assistant-drawer"
+            className="fixed bottom-0 right-0 sm:bottom-6 sm:right-6 z-50 w-full sm:w-[440px] max-h-[92vh] h-[85vh] sm:h-[650px] bg-neutral-900 border border-neutral-700/80 rounded-t-3xl sm:rounded-3xl shadow-2xl shadow-black/90 flex flex-col overflow-hidden animate-scaleIn backdrop-blur-md"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="px-5 py-4 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-950">
+                  <Sparkles className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-white">Flow AI Concierge</h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/90 text-emerald-400 border border-emerald-800">
+                      Live
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-400">
+                    Grounded in {products.length} catalog products
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-1">
+                <button
+                  onClick={handleClearChat}
+                  className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition"
+                  title="Reset conversation"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  id="close-ai-assistant"
+                  onClick={() => setChatOpen(false)}
+                  className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition"
+                  title="Close AI Assistant"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-          </div>
 
           {/* Chat Messages Body */}
           <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-neutral-900/50">
@@ -503,6 +531,7 @@ export default function AiShoppingAssistant({
           </div>
 
         </div>
+        </>
       )}
     </>
   )

@@ -1,11 +1,10 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import Image from 'next/image'
 import { createClient } from '@/utils/supabase/client'
 import OrderTrackingModal from '@/components/OrderTrackingModal'
-import AiShoppingAssistant from '@/components/AiShoppingAssistant'
 import {
   ShoppingBag,
   Search,
@@ -36,10 +35,12 @@ import {
   Copy,
   AlertCircle,
   ArrowLeft,
-  Phone
+  Phone,
+  Send,
+  ChevronRight
 } from 'lucide-react'
 
-interface StorefrontProduct {
+export interface StorefrontProduct {
   id: string
   tenant_id?: string
   name: string
@@ -54,12 +55,12 @@ interface StorefrontProduct {
   tenant_name?: string
 }
 
-interface CartItem {
+export interface CartItem {
   product: StorefrontProduct
   quantity: number
 }
 
-interface ConfirmedOrder {
+export interface ConfirmedOrder {
   id: string
   order_ref: string
   total_amount: number
@@ -75,6 +76,22 @@ interface ConfirmedOrder {
   transaction_ref: string
   items: CartItem[]
 }
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  timestamp: Date
+  recommendedProducts?: StorefrontProduct[]
+  suggestedFollowUps?: string[]
+}
+
+const STARTER_PROMPTS = [
+  'What are your most popular recommendations?',
+  'Do you have any products under $100?',
+  'Show me audio and tech accessories',
+  'What would make a great gift?',
+]
 
 // Curated high quality default catalog items in case database is just initialized
 const DEFAULT_PRODUCTS: StorefrontProduct[] = [
@@ -201,6 +218,37 @@ export default function StorefrontPage() {
   // Tracking Modal State
   const [isTrackingModalOpen, setIsTrackingModalOpen] = useState(false)
   const [trackingModalQuery, setTrackingModalQuery] = useState('')
+
+  // 1. State Check: Define isAiOpen in the main Page component
+  const [isAiOpen, setIsAiOpen] = useState(false)
+
+  // AI Assistant Chat Internal State
+  const [aiMessages, setAiMessages] = useState<ChatMessage[]>([
+    {
+      id: 'welcome-1',
+      role: 'assistant',
+      content: `Hello! I'm your **Flow AI Shopping Concierge**. Ask me anything about our products, store availability, specs, or ask for personalized recommendations based on your budget!`,
+      timestamp: new Date(),
+      suggestedFollowUps: STARTER_PROMPTS,
+    },
+  ])
+  const [aiInputMessage, setAiInputMessage] = useState('')
+  const [isAiLoading, setIsAiLoading] = useState(false)
+  const [aiAddedProductId, setAiAddedProductId] = useState<string | null>(null)
+
+  const aiMessagesEndRef = useRef<HTMLDivElement>(null)
+  const aiInputRef = useRef<HTMLInputElement>(null)
+
+  const scrollAiToBottom = () => {
+    aiMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  useEffect(() => {
+    if (isAiOpen) {
+      scrollAiToBottom()
+      setTimeout(() => aiInputRef.current?.focus(), 150)
+    }
+  }, [isAiOpen, aiMessages])
 
   const [customerInfo, setCustomerInfo] = useState({
     name: 'Sarah Jenkins',
@@ -347,7 +395,7 @@ export default function StorefrontPage() {
   const tax = subtotal * 0.08
   const grandTotal = subtotal + shipping + tax
 
-  // Handle Checkout Execution (Calling API and persisting to orders, order_items, transactions)
+  // Handle Checkout Execution
   const handleCheckout = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     if (cart.length === 0) return
@@ -360,7 +408,6 @@ export default function StorefrontPage() {
     const snapshotCart = [...cart]
 
     try {
-      // 1. Send checkout request to backend API route
       const response = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -402,7 +449,6 @@ export default function StorefrontPage() {
       const confirmedOrderRef = data?.order?.order_ref || orderRef
       const confirmedTxnRef = data?.transaction?.reference || txnRef
 
-      // Update state to confirmed
       setLastOrder({
         id: confirmedOrderId,
         order_ref: confirmedOrderRef,
@@ -425,11 +471,9 @@ export default function StorefrontPage() {
     } catch (err: any) {
       console.warn('Backend API checkout note:', err?.message)
 
-      // Direct fallback via client to ensure resilience
       try {
         const fallbackOrderId = `ord-${Date.now()}`
         
-        // Try inserting directly to orders
         await supabase
           .from('orders')
           .insert({
@@ -439,7 +483,6 @@ export default function StorefrontPage() {
             status: 'completed',
           })
 
-        // Try inserting to transactions
         await supabase
           .from('transactions')
           .insert({
@@ -482,6 +525,140 @@ export default function StorefrontPage() {
       setCopiedRef(true)
       setTimeout(() => setCopiedRef(false), 2000)
     }
+  }
+
+  // AI Shopping Assistant Logic
+  const handleSendAiMessage = async (textToSend?: string) => {
+    const text = (textToSend || aiInputMessage).trim()
+    if (!text || isAiLoading) return
+
+    const userMsg: ChatMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: text,
+      timestamp: new Date(),
+    }
+
+    setAiMessages((prev) => [...prev, userMsg])
+    setAiInputMessage('')
+    setIsAiLoading(true)
+
+    try {
+      const history = [...aiMessages, userMsg].map((m) => ({
+        role: m.role,
+        content: m.content,
+      }))
+
+      const response = await fetch('/api/ai/shopping-assistant', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: history,
+          products: products.map((p) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            price: p.price,
+            category: p.category,
+            stock_quantity: p.stock_quantity ?? p.stock ?? 0,
+            image_url: p.image_url,
+            badge: p.badge,
+            tenant_name: p.tenant_name,
+          })),
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to get response from shopping assistant')
+      }
+
+      const data = await response.json()
+
+      const recommendedProducts: StorefrontProduct[] = []
+      if (Array.isArray(data.recommendedProductIds)) {
+        data.recommendedProductIds.forEach((id: string) => {
+          const match = products.find((p) => p.id === id)
+          if (match) recommendedProducts.push(match)
+        })
+      }
+
+      const assistantMsg: ChatMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: data.message || 'Here is what I found for you in our catalog.',
+        timestamp: new Date(),
+        recommendedProducts: recommendedProducts.length > 0 ? recommendedProducts : undefined,
+        suggestedFollowUps: data.suggestedFollowUps || [],
+      }
+
+      setAiMessages((prev) => [...prev, assistantMsg])
+    } catch (err: any) {
+      console.warn('AI Assistant error:', err)
+      const errorMsg: ChatMessage = {
+        id: `error-${Date.now()}`,
+        role: 'assistant',
+        content: `I'm currently unable to connect to the store assistant. Feel free to browse our full catalog above or try asking again in a moment!`,
+        timestamp: new Date(),
+        suggestedFollowUps: ['Show all products', 'What are the bestsellers?'],
+      }
+      setAiMessages((prev) => [...prev, errorMsg])
+    } finally {
+      setIsAiLoading(false)
+    }
+  }
+
+  const handleAiAddToCartQuickAction = (product: StorefrontProduct) => {
+    addToCart(product, 1)
+    setAiAddedProductId(product.id)
+    setTimeout(() => {
+      setAiAddedProductId(null)
+    }, 2000)
+  }
+
+  const handleClearAiChat = () => {
+    setAiMessages([
+      {
+        id: 'welcome-reset',
+        role: 'assistant',
+        content: `Chat history cleared! How can I help you discover the perfect item today?`,
+        timestamp: new Date(),
+        suggestedFollowUps: STARTER_PROMPTS,
+      },
+    ])
+  }
+
+  const renderAiFormattedText = (content: string) => {
+    const lines = content.split('\n')
+    return (
+      <div className="space-y-1.5">
+        {lines.map((line, idx) => {
+          if (!line.trim()) return <div key={idx} className="h-1.5" />
+          
+          const parts = line.split(/(\*\*.*?\*\*)/g)
+          return (
+            <p key={idx} className="text-xs leading-relaxed">
+              {parts.map((part, pIdx) => {
+                if (part.startsWith('**') && part.endsWith('**')) {
+                  return (
+                    <strong key={pIdx} className="font-bold text-white">
+                      {part.slice(2, -2)}
+                    </strong>
+                  )
+                }
+                if (part.startsWith('• ')) {
+                  return (
+                    <span key={pIdx} className="inline-block pl-1 text-neutral-200">
+                      • {part.slice(2)}
+                    </span>
+                  )
+                }
+                return <span key={pIdx}>{part}</span>
+              })}
+            </p>
+          )
+        })}
+      </div>
+    )
   }
 
   return (
@@ -535,11 +712,22 @@ export default function StorefrontPage() {
                 setTrackingModalQuery('')
                 setIsTrackingModalOpen(true)
               }}
-              className="flex items-center space-x-2 px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-800 rounded-xl text-xs font-semibold transition shadow-sm"
+              className="flex items-center space-x-2 px-3.5 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-800 rounded-xl text-xs font-semibold transition shadow-sm cursor-pointer"
               title="Track Package Status"
             >
               <Truck className="w-4 h-4 text-emerald-400" />
               <span className="hidden sm:inline">Track Order</span>
+            </button>
+
+            {/* AI Concierge Assistant Header Button */}
+            <button
+              id="header-open-ai-chat-btn"
+              onClick={() => setIsAiOpen(true)}
+              className="hidden lg:flex items-center space-x-2 px-3.5 py-2 bg-emerald-950 hover:bg-emerald-900 text-emerald-300 hover:text-white border border-emerald-800 rounded-xl text-xs font-semibold transition shadow-sm cursor-pointer"
+              title="Open AI Shopping Concierge"
+            >
+              <Sparkles className="w-4 h-4 text-emerald-400 animate-pulse" />
+              <span>Ask AI</span>
             </button>
 
             {/* Vendor Dashboard Link */}
@@ -560,7 +748,7 @@ export default function StorefrontPage() {
                 }
                 setIsCartOpen(true)
               }}
-              className="relative p-2.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-800 rounded-xl transition flex items-center space-x-2 shadow-sm"
+              className="relative p-2.5 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 hover:text-white border border-neutral-800 rounded-xl transition flex items-center space-x-2 shadow-sm cursor-pointer"
               aria-label="View Shopping Cart"
             >
               <ShoppingBag className="w-5 h-5 text-emerald-400" />
@@ -627,7 +815,7 @@ export default function StorefrontPage() {
                 <button
                   key={category}
                   onClick={() => setSelectedCategory(category)}
-                  className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors ${
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
                     selectedCategory === category
                       ? 'bg-emerald-600 text-white shadow-md shadow-emerald-950'
                       : 'bg-neutral-950 text-neutral-400 hover:text-white hover:bg-neutral-800 border border-neutral-800'
@@ -709,7 +897,7 @@ export default function StorefrontPage() {
                   setSelectedCategory('All')
                   setPriceRange(500)
                 }}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow"
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow cursor-pointer"
               >
                 Reset All Filters
               </button>
@@ -754,7 +942,7 @@ export default function StorefrontPage() {
                       {/* Quick View Button */}
                       <button
                         onClick={() => setQuickViewProduct(product)}
-                        className="absolute bottom-3 right-3 p-2 bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 hover:text-white rounded-xl border border-neutral-700/80 shadow-md opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm"
+                        className="absolute bottom-3 right-3 p-2 bg-neutral-900/90 hover:bg-neutral-800 text-neutral-200 hover:text-white rounded-xl border border-neutral-700/80 shadow-md opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm cursor-pointer"
                         title="Quick View"
                       >
                         <Eye className="w-4 h-4" />
@@ -801,7 +989,7 @@ export default function StorefrontPage() {
                           id={`add-to-cart-${product.id}`}
                           onClick={() => addToCart(product)}
                           disabled={isOutOfStock}
-                          className={`px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition active:scale-95 shadow-md ${
+                          className={`px-3.5 py-2.5 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition active:scale-95 shadow-md cursor-pointer ${
                             isOutOfStock
                               ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed border border-neutral-700/40'
                               : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950'
@@ -940,7 +1128,7 @@ export default function StorefrontPage() {
                   {checkoutStep === 'details' && (
                     <button
                       onClick={() => setCheckoutStep('cart')}
-                      className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 text-xs flex items-center space-x-1"
+                      className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 text-xs flex items-center space-x-1 cursor-pointer"
                     >
                       <ArrowLeft className="w-4 h-4" />
                       <span>Back</span>
@@ -949,7 +1137,7 @@ export default function StorefrontPage() {
                   <button
                     id="close-cart-btn"
                     onClick={() => setIsCartOpen(false)}
-                    className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition"
+                    className="p-1.5 text-neutral-400 hover:text-white rounded-lg hover:bg-neutral-800 transition cursor-pointer"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -972,7 +1160,7 @@ export default function StorefrontPage() {
                 </div>
               )}
 
-              {/* ================= STEP 1: CART ITEMS ================= */}
+              {/* STEP 1: CART ITEMS */}
               {checkoutStep === 'cart' && (
                 <>
                   <div className="flex-1 overflow-y-auto p-6 space-y-4 divide-y divide-neutral-800/60">
@@ -987,7 +1175,7 @@ export default function StorefrontPage() {
                         </div>
                         <button
                           onClick={() => setIsCartOpen(false)}
-                          className="mt-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow"
+                          className="mt-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow cursor-pointer"
                         >
                           Start Shopping
                         </button>
@@ -1024,7 +1212,7 @@ export default function StorefrontPage() {
                               </div>
                               <button
                                 onClick={() => removeFromCart(item.product.id)}
-                                className="text-neutral-500 hover:text-red-400 transition"
+                                className="text-neutral-500 hover:text-red-400 transition cursor-pointer"
                                 title="Remove item"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
@@ -1036,14 +1224,14 @@ export default function StorefrontPage() {
                               <div className="flex items-center space-x-2 bg-neutral-950 border border-neutral-800 rounded-lg p-1">
                                 <button
                                   onClick={() => updateQuantity(item.product.id, -1)}
-                                  className="p-1 text-neutral-400 hover:text-white rounded hover:bg-neutral-800"
+                                  className="p-1 text-neutral-400 hover:text-white rounded hover:bg-neutral-800 cursor-pointer"
                                 >
                                   <Minus className="w-3 h-3" />
                                 </button>
                                 <span className="text-xs font-bold px-1.5">{item.quantity}</span>
                                 <button
                                   onClick={() => updateQuantity(item.product.id, 1)}
-                                  className="p-1 text-neutral-400 hover:text-white rounded hover:bg-neutral-800"
+                                  className="p-1 text-neutral-400 hover:text-white rounded hover:bg-neutral-800 cursor-pointer"
                                 >
                                   <Plus className="w-3 h-3" />
                                 </button>
@@ -1086,7 +1274,7 @@ export default function StorefrontPage() {
                       <button
                         id="proceed-to-checkout-step-btn"
                         onClick={() => setCheckoutStep('details')}
-                        className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-sm font-bold transition shadow-lg shadow-emerald-950 flex items-center justify-center space-x-2"
+                        className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-sm font-bold transition shadow-lg shadow-emerald-950 flex items-center justify-center space-x-2 cursor-pointer"
                       >
                         <span>Proceed to Shipping & Payment</span>
                         <ArrowRight className="w-4 h-4" />
@@ -1100,12 +1288,11 @@ export default function StorefrontPage() {
                 </>
               )}
 
-              {/* ================= STEP 2: CUSTOMER & PAYMENT DETAILS ================= */}
+              {/* STEP 2: CUSTOMER & PAYMENT DETAILS */}
               {checkoutStep === 'details' && (
                 <form onSubmit={handleCheckout} className="flex-1 flex flex-col justify-between overflow-y-auto">
                   <div className="p-6 space-y-5 overflow-y-auto">
                     
-                    {/* Customer Information Section */}
                     <div className="space-y-3">
                       <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
                         <User className="w-3.5 h-3.5 text-emerald-400" />
@@ -1156,7 +1343,6 @@ export default function StorefrontPage() {
                       </div>
                     </div>
 
-                    {/* Shipping Address */}
                     <div className="space-y-3 pt-3 border-t border-neutral-800">
                       <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
                         <MapPin className="w-3.5 h-3.5 text-emerald-400" />
@@ -1178,7 +1364,6 @@ export default function StorefrontPage() {
                       </div>
                     </div>
 
-                    {/* Payment Method */}
                     <div className="space-y-3 pt-3 border-t border-neutral-800">
                       <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center space-x-2">
                         <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
@@ -1189,7 +1374,7 @@ export default function StorefrontPage() {
                         <button
                           type="button"
                           onClick={() => setCustomerInfo({ ...customerInfo, paymentMethod: 'credit_card' })}
-                          className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                          className={`p-3 rounded-xl border text-left text-xs font-semibold transition cursor-pointer ${
                             customerInfo.paymentMethod === 'credit_card'
                               ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
                               : 'bg-neutral-950 border-neutral-800 text-neutral-400'
@@ -1202,7 +1387,7 @@ export default function StorefrontPage() {
                         <button
                           type="button"
                           onClick={() => setCustomerInfo({ ...customerInfo, paymentMethod: 'direct_escrow' })}
-                          className={`p-3 rounded-xl border text-left text-xs font-semibold transition ${
+                          className={`p-3 rounded-xl border text-left text-xs font-semibold transition cursor-pointer ${
                             customerInfo.paymentMethod === 'direct_escrow'
                               ? 'bg-emerald-950/70 border-emerald-600 text-emerald-300'
                               : 'bg-neutral-950 border-neutral-800 text-neutral-400'
@@ -1225,7 +1410,6 @@ export default function StorefrontPage() {
                       </div>
                     </div>
 
-                    {/* Order summary small */}
                     <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-3 text-xs space-y-1.5">
                       <div className="flex justify-between text-neutral-400">
                         <span>Items ({totalCartItems})</span>
@@ -1243,13 +1427,12 @@ export default function StorefrontPage() {
 
                   </div>
 
-                  {/* Checkout Actions */}
                   <div className="p-6 bg-neutral-950 border-t border-neutral-800 space-y-3">
                     <button
                       id="place-order-submit-btn"
                       type="submit"
                       disabled={isCheckingOut}
-                      className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-sm font-bold transition shadow-lg shadow-emerald-950 flex items-center justify-center space-x-2 disabled:opacity-50"
+                      className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white rounded-xl text-sm font-bold transition shadow-lg shadow-emerald-950 flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer"
                     >
                       {isCheckingOut ? (
                         <>
@@ -1267,11 +1450,10 @@ export default function StorefrontPage() {
                 </form>
               )}
 
-              {/* ================= STEP 3: ORDER RECEIPT & CONFIRMATION ================= */}
+              {/* STEP 3: ORDER RECEIPT & CONFIRMATION */}
               {checkoutStep === 'confirmed' && lastOrder && (
                 <div className="flex-1 flex flex-col justify-between overflow-y-auto p-6 space-y-6 animate-fadeIn">
                   
-                  {/* Success Banner */}
                   <div className="text-center space-y-3 pt-2">
                     <div className="w-14 h-14 bg-emerald-950 border border-emerald-800 text-emerald-400 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-emerald-950">
                       <CheckCircle2 className="w-8 h-8" />
@@ -1287,7 +1469,6 @@ export default function StorefrontPage() {
                     </div>
                   </div>
 
-                  {/* Supabase Persistence Audit Proof Box */}
                   <div className="bg-neutral-950 border border-neutral-800 rounded-2xl p-4 space-y-3 text-xs">
                     <div className="flex items-center justify-between border-b border-neutral-800 pb-2">
                       <span className="font-semibold text-neutral-300">Database Ledger Proof</span>
@@ -1296,7 +1477,6 @@ export default function StorefrontPage() {
                       </span>
                     </div>
 
-                    {/* Order table entry */}
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="text-neutral-400 font-medium flex items-center space-x-1.5">
@@ -1309,7 +1489,7 @@ export default function StorefrontPage() {
                           </span>
                           <button
                             onClick={copyOrderRef}
-                            className="text-neutral-500 hover:text-white p-0.5"
+                            className="text-neutral-500 hover:text-white p-0.5 cursor-pointer"
                             title="Copy Order Reference"
                           >
                             {copiedRef ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -1318,7 +1498,6 @@ export default function StorefrontPage() {
                       </div>
                     </div>
 
-                    {/* Order_items table entry */}
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="text-neutral-400 font-medium flex items-center space-x-1.5">
@@ -1331,7 +1510,6 @@ export default function StorefrontPage() {
                       </div>
                     </div>
 
-                    {/* Transactions table entry */}
                     <div className="space-y-1">
                       <div className="flex items-center justify-between">
                         <span className="text-neutral-400 font-medium flex items-center space-x-1.5">
@@ -1344,7 +1522,6 @@ export default function StorefrontPage() {
                       </div>
                     </div>
 
-                    {/* Customer receipt summary */}
                     <div className="pt-2 border-t border-neutral-800 space-y-1 text-neutral-400 text-[11px]">
                       <div className="flex justify-between">
                         <span>Recipient Email:</span>
@@ -1357,7 +1534,6 @@ export default function StorefrontPage() {
                     </div>
                   </div>
 
-                  {/* Purchased Items List */}
                   {lastOrder.items && lastOrder.items.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-bold text-white uppercase tracking-wider">Ordered Items</p>
@@ -1377,17 +1553,14 @@ export default function StorefrontPage() {
                     </div>
                   )}
 
-                  {/* Action Buttons */}
                   <div className="space-y-3 pt-2">
-                    
-                    {/* Live Tracking Button */}
                     <button
                       id="track-new-order-btn"
                       onClick={() => {
                         setTrackingModalQuery(lastOrder.order_ref || lastOrder.id)
                         setIsTrackingModalOpen(true)
                       }}
-                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-2 shadow-lg shadow-emerald-950 transition"
+                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-2 shadow-lg shadow-emerald-950 transition cursor-pointer"
                     >
                       <Truck className="w-4 h-4" />
                       <span>Track Order Real-Time Status</span>
@@ -1406,7 +1579,7 @@ export default function StorefrontPage() {
                         setCheckoutStep('cart')
                         setIsCartOpen(false)
                       }}
-                      className="w-full py-2.5 bg-neutral-950 hover:bg-neutral-800 text-neutral-300 hover:text-white rounded-xl text-xs font-semibold border border-neutral-800 transition"
+                      className="w-full py-2.5 bg-neutral-950 hover:bg-neutral-800 text-neutral-300 hover:text-white rounded-xl text-xs font-semibold border border-neutral-800 transition cursor-pointer"
                     >
                       Continue Shopping
                     </button>
@@ -1427,7 +1600,7 @@ export default function StorefrontPage() {
             
             <button
               onClick={() => setQuickViewProduct(null)}
-              className="absolute top-4 right-4 z-10 p-2 bg-neutral-950/80 hover:bg-neutral-800 text-neutral-300 hover:text-white rounded-full border border-neutral-700 transition"
+              className="absolute top-4 right-4 z-10 p-2 bg-neutral-950/80 hover:bg-neutral-800 text-neutral-300 hover:text-white rounded-full border border-neutral-700 transition cursor-pointer"
             >
               <X className="w-4 h-4" />
             </button>
@@ -1471,7 +1644,7 @@ export default function StorefrontPage() {
                     addToCart(quickViewProduct)
                     setQuickViewProduct(null)
                   }}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-950 flex items-center justify-center space-x-2"
+                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-950 flex items-center justify-center space-x-2 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Add to Shopping Cart</span>
@@ -1490,13 +1663,287 @@ export default function StorefrontPage() {
         initialQuery={trackingModalQuery}
       />
 
-      {/* ===================== AI SHOPPING ASSISTANT ===================== */}
-      <AiShoppingAssistant
-        products={products}
-        currency="$"
-        onAddToCart={(product) => addToCart(product, 1)}
-        onQuickView={(product) => setQuickViewProduct(product)}
-      />
+      {/* ===================== 2. FLOATING ASK AI ASSISTANT BUTTON ===================== */}
+      {!isAiOpen && (
+        <div className="fixed bottom-6 right-6 z-40">
+          <button
+            id="ai-shopping-assistant-toggle"
+            onClick={() => setIsAiOpen(true)}
+            className="group relative flex items-center gap-2.5 px-4 py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-full shadow-2xl shadow-emerald-950/60 border border-emerald-400/30 hover:scale-105 active:scale-95 transition-all duration-300 cursor-pointer"
+            title="Open AI Shopping Concierge"
+          >
+            {/* Animated Pulsing Ring */}
+            <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-emerald-400"></span>
+            </span>
+
+            <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center">
+              <Sparkles className="w-3.5 h-3.5 text-white animate-pulse" />
+            </div>
+
+            <div className="text-left">
+              <div className="text-xs font-extrabold tracking-wide flex items-center gap-1.5">
+                <span>Ask AI Assistant</span>
+              </div>
+            </div>
+          </button>
+        </div>
+      )}
+
+      {/* ===================== 3, 4, 5. INLINE AI ASSISTANT SLIDE-OVER DRAWER ===================== */}
+      {isAiOpen && (
+        <div
+          id="ai-assistant-overlay"
+          onClick={() => setIsAiOpen(false)}
+          className="fixed inset-0 z-[9999] bg-black/60 backdrop-blur-sm flex justify-end pointer-events-auto transition-opacity animate-fadeIn"
+        >
+          {/* Slide-over Drawer Window */}
+          <div
+            id="ai-assistant-drawer"
+            onClick={(e) => e.stopPropagation()}
+            className="w-full sm:w-[440px] md:w-[480px] h-full bg-neutral-900 border-l border-neutral-800 shadow-2xl shadow-black flex flex-col overflow-hidden relative animate-slideInRight"
+          >
+            {/* 5. Drawer Header with Close Button (X) */}
+            <div className="px-5 py-4 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center shadow-lg shadow-emerald-950">
+                  <Sparkles className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-white">Flow AI Concierge</h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-950/90 text-emerald-400 border border-emerald-800">
+                      Live
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-neutral-400">
+                    Grounded in {products.length} catalog products
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-1.5">
+                <button
+                  onClick={handleClearAiChat}
+                  className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition cursor-pointer"
+                  title="Reset conversation"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  id="close-ai-assistant"
+                  onClick={() => setIsAiOpen(false)}
+                  className="p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-xl transition cursor-pointer"
+                  title="Close AI Assistant"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Chat Messages Body */}
+            <div className="flex-1 p-4 overflow-y-auto space-y-4 bg-neutral-900/50">
+              {aiMessages.map((msg) => {
+                const isUser = msg.role === 'user'
+
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} space-y-2`}
+                  >
+                    {/* Message Bubble */}
+                    <div
+                      className={`max-w-[88%] rounded-2xl p-3.5 text-xs ${
+                        isUser
+                          ? 'bg-emerald-600 text-white rounded-br-xs shadow-md shadow-emerald-950/40'
+                          : 'bg-neutral-950 border border-neutral-800 text-neutral-200 rounded-bl-xs shadow-md'
+                      }`}
+                    >
+                      {!isUser && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-400 uppercase tracking-wider mb-1.5">
+                          <Sparkles className="w-3 h-3" />
+                          <span>Flow Assistant</span>
+                        </div>
+                      )}
+
+                      {renderAiFormattedText(msg.content)}
+                    </div>
+
+                    {/* Recommended Products with Direct "Add to Cart" Actions */}
+                    {msg.recommendedProducts && msg.recommendedProducts.length > 0 && (
+                      <div className="w-full space-y-2.5 pt-1">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-neutral-400 px-1">
+                          <span className="flex items-center gap-1 text-emerald-400">
+                            <ShoppingBag className="w-3 h-3" />
+                            Recommended Products ({msg.recommendedProducts.length})
+                          </span>
+                          <span className="text-[10px] text-neutral-500 font-mono">1-Click Cart</span>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-2">
+                          {msg.recommendedProducts.map((product) => {
+                            const stock = product.stock_quantity ?? product.stock ?? 0
+                            const isOutOfStock = stock <= 0
+                            const isJustAdded = aiAddedProductId === product.id
+
+                            return (
+                              <div
+                                key={product.id}
+                                className="bg-neutral-950 border border-neutral-800 hover:border-emerald-800/80 rounded-2xl p-3 flex items-center justify-between gap-3 transition group shadow-sm"
+                              >
+                                {/* Thumbnail Image */}
+                                <div className="relative w-14 h-14 rounded-xl overflow-hidden bg-neutral-900 border border-neutral-800 shrink-0">
+                                  {product.image_url ? (
+                                    <Image
+                                      src={product.image_url}
+                                      alt={product.name}
+                                      fill
+                                      className="object-cover group-hover:scale-105 transition-transform duration-300"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-neutral-600">
+                                      <ShoppingBag className="w-5 h-5" />
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Details */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[9px] font-semibold text-emerald-400 uppercase tracking-wider">
+                                      {product.category || 'Store'}
+                                    </span>
+                                    {stock <= 5 && stock > 0 && (
+                                      <span className="text-[9px] text-amber-400 font-bold">
+                                        • Only {stock} left
+                                      </span>
+                                    )}
+                                  </div>
+                                  <h4 className="text-xs font-bold text-white truncate group-hover:text-emerald-300 transition">
+                                    {product.name}
+                                  </h4>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-xs font-extrabold text-white">
+                                      ${Number(product.price).toFixed(2)}
+                                    </span>
+                                    <button
+                                      onClick={() => setQuickViewProduct(product)}
+                                      className="text-[10px] text-neutral-400 hover:text-neutral-200 underline cursor-pointer"
+                                    >
+                                      Details
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Direct Add to Cart Action */}
+                                <button
+                                  id={`ai-add-cart-${product.id}`}
+                                  onClick={() => handleAiAddToCartQuickAction(product)}
+                                  disabled={isOutOfStock}
+                                  className={`shrink-0 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md cursor-pointer ${
+                                    isJustAdded
+                                      ? 'bg-emerald-600 text-white'
+                                      : isOutOfStock
+                                      ? 'bg-neutral-800 text-neutral-500 cursor-not-allowed'
+                                      : 'bg-emerald-950 hover:bg-emerald-600 text-emerald-300 hover:text-white border border-emerald-800 hover:border-emerald-500'
+                                  }`}
+                                  title={isOutOfStock ? 'Out of stock' : 'Add directly to your shopping cart'}
+                                >
+                                  {isJustAdded ? (
+                                    <>
+                                      <Check className="w-3.5 h-3.5" />
+                                      <span>Added!</span>
+                                    </>
+                                  ) : isOutOfStock ? (
+                                    <span>Sold Out</span>
+                                  ) : (
+                                    <>
+                                      <Plus className="w-3.5 h-3.5" />
+                                      <span>Add</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Follow-up Quick Chips */}
+                    {msg.suggestedFollowUps && msg.suggestedFollowUps.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 pt-1 w-full">
+                        {msg.suggestedFollowUps.map((suggestion, sIdx) => (
+                          <button
+                            key={sIdx}
+                            onClick={() => handleSendAiMessage(suggestion)}
+                            disabled={isAiLoading}
+                            className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-neutral-950 hover:bg-neutral-800 text-neutral-300 hover:text-emerald-300 border border-neutral-800 hover:border-emerald-700 transition flex items-center gap-1 text-left cursor-pointer"
+                          >
+                            <span>{suggestion}</span>
+                            <ChevronRight className="w-3 h-3 text-neutral-500" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+
+              {/* Loading Indicator */}
+              {isAiLoading && (
+                <div className="flex items-start space-x-2">
+                  <div className="bg-neutral-950 border border-neutral-800 rounded-2xl rounded-bl-xs p-3.5 text-xs text-neutral-300 flex items-center space-x-2.5">
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" />
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.2s]" />
+                    <div className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.4s]" />
+                    <span className="text-[11px] text-neutral-400 font-medium pl-1">
+                      Checking live inventory...
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div ref={aiMessagesEndRef} />
+            </div>
+
+            {/* Footer Input */}
+            <div className="p-3 bg-neutral-950 border-t border-neutral-800">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  handleSendAiMessage()
+                }}
+                className="flex items-center space-x-2"
+              >
+                <input
+                  ref={aiInputRef}
+                  id="ai-shopping-input"
+                  type="text"
+                  value={aiInputMessage}
+                  onChange={(e) => setAiInputMessage(e.target.value)}
+                  placeholder="Ask about products, prices, or recommendations..."
+                  disabled={isAiLoading}
+                  className="flex-1 px-3.5 py-2.5 bg-neutral-900 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 transition disabled:opacity-50"
+                />
+                <button
+                  id="ai-shopping-send"
+                  type="submit"
+                  disabled={!aiInputMessage.trim() || isAiLoading}
+                  className="p-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:hover:bg-emerald-600 text-white rounded-xl transition shadow-md shadow-emerald-950 cursor-pointer"
+                  title="Send inquiry"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              </form>
+            </div>
+
+          </div>
+        </div>
+      )}
 
     </div>
   )

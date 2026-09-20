@@ -1,0 +1,6 @@
+{
+  "name": "Flow Commerce",
+  "description": "Multi-tenant commerce engine with Supabase authentication and dashboard",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

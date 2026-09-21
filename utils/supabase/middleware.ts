@@ -9,7 +9,7 @@ export async function updateSession(request: NextRequest) {
 
   const { isConfigured, url, anonKey } = getSafeSupabaseConfig()
 
-  if (!isConfigured || !isValidSupabaseUrl(process.env.NEXT_PUBLIC_SUPABASE_URL)) {
+  if (!isConfigured || !isValidSupabaseUrl(url)) {
     return supabaseResponse
   }
 

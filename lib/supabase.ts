@@ -1,10 +1,4 @@
-import { createClient } from '@supabase/supabase-js'
-import { getSafeSupabaseConfig } from '@/utils/supabase/check-env'
+import { supabase, createClient, FALLBACK_SUPABASE_URL, FALLBACK_SUPABASE_ANON_KEY } from './supabaseClient'
 
-const { url, anonKey } = getSafeSupabaseConfig()
-
-export const supabase = createClient(url, anonKey)
-
-export { createClient }
+export { supabase, createClient, FALLBACK_SUPABASE_URL, FALLBACK_SUPABASE_ANON_KEY }
 export default supabase
-

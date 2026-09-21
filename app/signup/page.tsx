@@ -1,10 +1,12 @@
 'use client';
 
+// Place at: app/signup/page.tsx
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
-import { Store, Mail, Lock, User, Building2, Globe2, Clock, ArrowLeft, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { Store, ArrowLeft, ShieldCheck, CheckCircle2 } from 'lucide-react';
 
 const INDUSTRIES = [
   { value: 'boutique', label: 'Boutique / Fashion' },
@@ -12,16 +14,8 @@ const INDUSTRIES = [
   { value: 'retail', label: 'General Retail' },
   { value: 'services', label: 'Services' },
 ];
-
 const CURRENCIES = ['NGN', 'GHS', 'KES', 'ZAR', 'USD'];
-
-const TIMEZONES = [
-  'Africa/Lagos',
-  'Africa/Accra',
-  'Africa/Nairobi',
-  'Africa/Johannesburg',
-  'UTC',
-];
+const TIMEZONES = ['Africa/Lagos', 'Africa/Accra', 'Africa/Nairobi', 'Africa/Johannesburg', 'UTC'];
 
 const fieldStyle = {
   width: '100%',
@@ -51,16 +45,15 @@ export default function MerchantSignup() {
   const [currency, setCurrency] = useState('NGN');
   const [timezone, setTimezone] = useState('Africa/Lagos');
 
-  const [loading, setLoading] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [success, setSuccess] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    console.log('submit fired');
-    if (loading) return;
+    if (isSubmitting) return;
 
-    setLoading(true);
+    setIsSubmitting(true);
     setErrorMsg('');
 
     try {
@@ -68,7 +61,7 @@ export default function MerchantSignup() {
         email: email.trim(),
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/dashboard`,
+          emailRedirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/dashboard`,
           data: {
             full_name: fullName.trim(),
             business_name: storeName.trim(),
@@ -78,7 +71,6 @@ export default function MerchantSignup() {
           },
         },
       });
-      console.log('signUp result', { data, error });
 
       if (error) {
         setErrorMsg(error.message);
@@ -88,7 +80,7 @@ export default function MerchantSignup() {
       // With email confirmation on, an existing email returns a fake user
       // with an empty identities array instead of an error.
       if (data.user && data.user.identities?.length === 0) {
-        setErrorMsg('An account with this email already exists. Try signing in instead.');
+        setErrorMsg('An account with this email already exists.');
         return;
       }
 
@@ -99,32 +91,40 @@ export default function MerchantSignup() {
       }
 
       // Otherwise the merchant must verify their email first.
-      setSuccess(true);
+      setIsSuccess(true);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
-  if (success) {
+  if (isSuccess) {
     return (
       <div className="min-h-screen bg-neutral-950 text-neutral-100 flex items-center justify-center p-4">
         <div
           id="signup-success-container"
           className="w-full max-w-md bg-neutral-900 border border-neutral-800 rounded-2xl p-8 text-center shadow-2xl"
-          style={{ maxWidth: '480px', margin: '60px auto', textAlign: 'center', padding: '32px' }}
+          style={{
+            maxWidth: '480px',
+            margin: '60px auto',
+            textAlign: 'center',
+            padding: '32px',
+          }}
         >
           <div className="w-14 h-14 bg-emerald-500/10 border border-emerald-500/30 rounded-full flex items-center justify-center mx-auto mb-5 text-emerald-400">
             <CheckCircle2 className="w-7 h-7" />
           </div>
-          <h2 className="text-2xl font-bold tracking-tight text-white mb-3">Check your email</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-white mb-3">
+            Store Provisioned Successfully!
+          </h2>
           <p className="text-neutral-300 text-sm mb-3">
-            Your workspace for <strong className="text-white font-semibold">{storeName}</strong> has been created.
+            Your workspace for{' '}
+            <strong className="text-white font-semibold">{storeName}</strong> has been created.
           </p>
           <p className="text-neutral-400 text-xs leading-relaxed mb-6">
-            We sent a verification link to <strong className="text-emerald-400">{email}</strong>. Open it to confirm your
-            account and get to your dashboard.
+            We sent a verification link to{' '}
+            <strong className="text-emerald-400">{email}</strong>. Open it to confirm your account and get to your dashboard.
           </p>
           <div className="pt-4 border-t border-neutral-800/80 flex flex-col gap-2">
             <Link
@@ -323,16 +323,16 @@ export default function MerchantSignup() {
             <button
               id="submit-signup-btn"
               type="submit"
-              disabled={loading}
+              disabled={isSubmitting}
               style={{
                 width: '100%',
                 padding: '12px',
                 marginTop: '12px',
-                cursor: loading ? 'not-allowed' : 'pointer',
+                cursor: isSubmitting ? 'not-allowed' : 'pointer',
               }}
               className="bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-50 text-white font-medium text-sm rounded-xl transition shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2"
             >
-              {loading ? (
+              {isSubmitting ? (
                 <>
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
                   <span>Creating Store...</span>
@@ -347,7 +347,10 @@ export default function MerchantSignup() {
 
             <div className="mt-6 text-center text-xs text-neutral-400">
               Already registered?{' '}
-              <Link href="/login" className="text-emerald-400 hover:text-emerald-300 font-medium">
+              <Link
+                href="/login"
+                className="text-emerald-400 hover:text-emerald-300 font-medium"
+              >
                 Sign in to your dashboard
               </Link>
             </div>

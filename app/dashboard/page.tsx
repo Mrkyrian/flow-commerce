@@ -69,9 +69,53 @@ export default function Dashboard() {
         }
       }
 
+      // If no store record exists yet, auto-provision from registration user_metadata
+      if (!data && userData.user.user_metadata?.business_name) {
+        try {
+          const meta = userData.user.user_metadata;
+          const bName = meta.business_name || meta.store_name || 'My Store';
+          const slug =
+            bName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') ||
+            `store-${userData.user.id.slice(0, 8)}`;
+
+          const { data: newTenant, error: insertErr } = await supabase
+            .from('tenants')
+            .insert([
+              {
+                owner_id: userData.user.id,
+                name: bName,
+                business_name: bName,
+                slug,
+                industry_type: meta.industry_type || 'retail',
+                currency: meta.currency || 'NGN',
+                timezone: meta.timezone || 'Africa/Lagos',
+              },
+            ])
+            .select()
+            .maybeSingle();
+
+          if (!insertErr && newTenant) {
+            data = {
+              id: newTenant.id,
+              name: newTenant.name || newTenant.business_name || bName,
+              slug: newTenant.slug || newTenant.id,
+              industry_type: newTenant.industry_type || 'retail',
+              currency: newTenant.currency || 'NGN',
+              timezone: newTenant.timezone || 'Africa/Lagos',
+            } as any;
+            error = null;
+          }
+        } catch (provErr) {
+          console.warn('Dashboard auto-provision notice:', provErr);
+        }
+      }
+
       if (cancelled) return;
 
-      if (error) setErrorMsg(error.message);
+      if (error) {
+        console.error('Dashboard tenant retrieval error:', error);
+        setErrorMsg(error.message);
+      }
       setEmail(userData.user.email ?? '');
       setTenant(data as Tenant | null);
       setLoading(false);

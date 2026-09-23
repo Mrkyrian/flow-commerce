@@ -47,6 +47,7 @@ export default function MerchantSignup() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [isSuccess, setIsSuccess] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -55,6 +56,13 @@ export default function MerchantSignup() {
 
     setIsSubmitting(true);
     setErrorMsg('');
+    setSuccessMsg('');
+
+    console.log('Initiating merchant registration with Supabase for:', {
+      email: email.trim(),
+      storeName: storeName.trim(),
+      industryType,
+    });
 
     try {
       const { data, error } = await supabase.auth.signUp({
@@ -65,6 +73,7 @@ export default function MerchantSignup() {
           data: {
             full_name: fullName.trim(),
             business_name: storeName.trim(),
+            store_name: storeName.trim(),
             industry_type: industryType,
             currency,
             timezone,
@@ -73,26 +82,74 @@ export default function MerchantSignup() {
       });
 
       if (error) {
-        setErrorMsg(error.message);
+        console.error('Merchant registration Supabase auth error:', error);
+        setErrorMsg(error.message || 'Registration failed. Please check your credentials.');
         return;
       }
 
-      // With email confirmation on, an existing email returns a fake user
-      // with an empty identities array instead of an error.
+      // With email confirmation on, an existing email returns a user with empty identities
       if (data.user && data.user.identities?.length === 0) {
-        setErrorMsg('An account with this email already exists.');
+        console.warn('Merchant registration: User already exists with this email:', email.trim());
+        setErrorMsg('An account with this email already exists. Try signing in instead.');
         return;
       }
 
-      // Session exists when email confirmation is off: go straight in.
-      if (data.session) {
-        router.push('/dashboard');
+      console.log('Supabase user created successfully:', data.user?.id);
+
+      // Session exists when email confirmation is disabled: create workspace record immediately
+      if (data.session && data.user) {
+        setSuccessMsg('Account created! Initializing your store workspace...');
+        try {
+          const slug =
+            storeName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') ||
+            `store-${data.user.id.slice(0, 8)}`;
+
+          console.log('Provisioning store workspace in tenants table...');
+          const { error: tenantErr } = await supabase.from('tenants').insert([
+            {
+              owner_id: data.user.id,
+              name: storeName.trim(),
+              business_name: storeName.trim(),
+              slug,
+              industry_type: industryType,
+              currency,
+              timezone,
+            },
+          ]);
+
+          if (tenantErr) {
+            console.warn('Initial full-schema tenant insert warning, attempting fallback schema:', tenantErr);
+            const { error: fbErr } = await supabase.from('tenants').insert([
+              {
+                owner_id: data.user.id,
+                business_name: storeName.trim(),
+                industry_type: industryType,
+              },
+            ]);
+            if (fbErr) {
+              console.error('Fallback tenant insert error:', fbErr);
+            } else {
+              console.log('Fallback tenant insert succeeded.');
+            }
+          } else {
+            console.log('Store workspace record created successfully.');
+          }
+        } catch (wsErr) {
+          console.error('Store workspace provision error:', wsErr);
+        }
+
+        setSuccessMsg('Store provisioned successfully! Redirecting to dashboard...');
+        setTimeout(() => {
+          router.push('/dashboard');
+        }, 1000);
         return;
       }
 
-      // Otherwise the merchant must verify their email first.
+      // Otherwise email confirmation is required by Supabase Auth: notify merchant on screen
+      console.log('Email confirmation is required by Supabase. Showing verification instructions.');
       setIsSuccess(true);
     } catch (err) {
+      console.error('Merchant sign-up unhandled exception:', err);
       setErrorMsg(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -316,6 +373,14 @@ export default function MerchantSignup() {
               <div className="p-3 my-3 bg-red-950/40 border border-red-800/60 rounded-xl">
                 <p role="alert" style={{ color: '#ef4444', fontSize: '13px', margin: 0 }}>
                   {errorMsg}
+                </p>
+              </div>
+            )}
+
+            {successMsg && (
+              <div className="p-3 my-3 bg-emerald-950/40 border border-emerald-800/60 rounded-xl">
+                <p role="status" style={{ color: '#34d399', fontSize: '13px', margin: 0 }}>
+                  {successMsg}
                 </p>
               </div>
             )}

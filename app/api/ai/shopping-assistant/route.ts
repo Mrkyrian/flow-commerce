@@ -82,17 +82,19 @@ export async function POST(req: NextRequest) {
     }
 
     if (!apiKey) {
-      return NextResponse.json(buildFallback())
+      const fallback = buildFallback()
+      return NextResponse.json({
+        success: false,
+        apiError: 'GEMINI_API_KEY environment secret is not configured.',
+        message: fallback.message,
+        recommendedProductIds: fallback.recommendedProductIds,
+        suggestedFollowUps: fallback.suggestedFollowUps,
+      })
     }
 
     try {
       const ai = new GoogleGenAI({
         apiKey,
-        httpOptions: {
-          headers: {
-            'User-Agent': 'aistudio-build',
-          },
-        },
       })
 
       // Format inventory for AI context
@@ -128,49 +130,75 @@ INSTRUCTIONS:
 2. In 'recommendedProductIds', include the exact string IDs of products directly relevant to the user's question from the provided inventory (maximum 4 products). If the query is about policies or tracking, this can be empty.
 3. In 'suggestedFollowUps', provide 2 or 3 short follow-up questions the shopper might want to ask next.`
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: prompt,
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              message: {
-                type: Type.STRING,
-                description: 'Friendly markdown-formatted message answering the customer inquiry.',
-              },
-              recommendedProductIds: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: 'Array of valid product IDs from the inventory to show quick Add-to-Cart cards.',
-              },
-              suggestedFollowUps: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: '2 to 3 helpful short suggested follow-up questions.',
-              },
-            },
-            required: ['message', 'recommendedProductIds', 'suggestedFollowUps'],
-          },
-          systemInstruction:
-            'You are an expert e-commerce shopping concierge. Always give grounded advice based ONLY on the provided store inventory.',
-        },
-      })
+      // Supported modern models in order of preference
+      const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite']
+      let lastModelError: any = null
+      let response: any = null
 
-      const text = response.text
-      if (!text) {
-        return NextResponse.json(buildFallback())
+      for (const modelName of candidateModels) {
+        try {
+          response = await ai.models.generateContent({
+            model: modelName,
+            contents: prompt,
+            config: {
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: Type.OBJECT,
+                properties: {
+                  message: {
+                    type: Type.STRING,
+                    description: 'Friendly markdown-formatted message answering the customer inquiry.',
+                  },
+                  recommendedProductIds: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                    description: 'Array of valid product IDs from the inventory to show quick Add-to-Cart cards.',
+                  },
+                  suggestedFollowUps: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING },
+                    description: '2 to 3 helpful short suggested follow-up questions.',
+                  },
+                },
+                required: ['message', 'recommendedProductIds', 'suggestedFollowUps'],
+              },
+              systemInstruction:
+                'You are an expert e-commerce shopping concierge. Always give grounded advice based ONLY on the provided store inventory.',
+            },
+          })
+          if (response?.text) {
+            break
+          }
+        } catch (mErr: any) {
+          lastModelError = mErr
+          console.warn(`Model ${modelName} attempt failed:`, mErr?.message || mErr)
+        }
       }
 
-      const parsed = JSON.parse(text)
-      // Filter recommendedProductIds to only valid IDs in current catalog
+      if (!response?.text) {
+        const fallback = buildFallback()
+        const fullErrStr =
+          lastModelError?.message ||
+          (typeof lastModelError === 'string' ? lastModelError : JSON.stringify(lastModelError)) ||
+          'Gemini API request failed to return content.'
+
+        return NextResponse.json({
+          success: false,
+          apiError: fullErrStr,
+          message: fallback.message,
+          recommendedProductIds: fallback.recommendedProductIds,
+          suggestedFollowUps: fallback.suggestedFollowUps,
+        })
+      }
+
+      const parsed = JSON.parse(response.text)
       const validProductIds = new Set((products as CatalogProduct[]).map((p) => p.id))
       const safeRecIds = (Array.isArray(parsed.recommendedProductIds) ? parsed.recommendedProductIds : []).filter(
         (id: string) => validProductIds.has(id)
       )
 
       return NextResponse.json({
+        success: true,
         message: parsed.message || 'I found some great options for you in our catalog.',
         recommendedProductIds: safeRecIds,
         suggestedFollowUps: Array.isArray(parsed.suggestedFollowUps)
@@ -178,8 +206,18 @@ INSTRUCTIONS:
           : ['What are your top recommendations?', 'Show gifts under $100'],
       })
     } catch (apiErr: any) {
-      console.warn('Gemini API shopping assistant warning:', apiErr)
-      return NextResponse.json(buildFallback())
+      console.error('Gemini API shopping assistant exception:', apiErr)
+      const fallback = buildFallback()
+      const errDetail =
+        apiErr?.message || (typeof apiErr === 'string' ? apiErr : JSON.stringify(apiErr)) || 'Unknown API Error'
+
+      return NextResponse.json({
+        success: false,
+        apiError: errDetail,
+        message: fallback.message,
+        recommendedProductIds: fallback.recommendedProductIds,
+        suggestedFollowUps: fallback.suggestedFollowUps,
+      })
     }
   } catch (err: any) {
     console.error('AI Shopping Assistant API error:', err)

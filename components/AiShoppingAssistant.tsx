@@ -17,7 +17,8 @@ import {
   HelpCircle,
   Zap,
   ArrowUpRight,
-  Plus
+  Plus,
+  AlertCircle
 } from 'lucide-react'
 
 export interface StorefrontProduct {
@@ -42,6 +43,7 @@ export interface ChatMessage {
   timestamp: Date
   recommendedProducts?: StorefrontProduct[]
   suggestedFollowUps?: string[]
+  apiError?: string
 }
 
 interface AiShoppingAssistantProps {
@@ -130,58 +132,78 @@ export default function AiShoppingAssistant({
         content: m.content,
       }))
 
-      const response = await fetch('/api/ai/shopping-assistant', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: history,
-          products: products.map((p) => ({
-            id: p.id,
-            name: p.name,
-            description: p.description,
-            price: p.price,
-            category: p.category,
-            stock_quantity: p.stock_quantity ?? p.stock ?? 0,
-            image_url: p.image_url,
-            badge: p.badge,
-            tenant_name: p.tenant_name,
-          })),
-        }),
-      })
+      let data: any = null
+      let fetchErrorString: string | null = null
 
-      if (!response.ok) {
-        throw new Error('Failed to get response from shopping assistant')
+      try {
+        const response = await fetch('/api/ai/shopping-assistant', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: history,
+            products: products.map((p) => ({
+              id: p.id,
+              name: p.name,
+              description: p.description,
+              price: p.price,
+              category: p.category,
+              stock_quantity: p.stock_quantity ?? p.stock ?? 0,
+              image_url: p.image_url,
+              badge: p.badge,
+              tenant_name: p.tenant_name,
+            })),
+          }),
+        })
+
+        data = await response.json().catch(() => ({}))
+
+        if (!response.ok) {
+          fetchErrorString =
+            data?.apiError ||
+            data?.error ||
+            `HTTP ${response.status} error from shopping assistant endpoint`
+        }
+      } catch (networkErr: any) {
+        fetchErrorString = `Network error connecting to assistant: ${networkErr?.message || networkErr}`
       }
 
-      const data = await response.json()
+      const activeApiError = data?.apiError || fetchErrorString
 
       // Map recommended IDs to full product objects
       const recommendedProducts: StorefrontProduct[] = []
-      if (Array.isArray(data.recommendedProductIds)) {
+      if (Array.isArray(data?.recommendedProductIds)) {
         data.recommendedProductIds.forEach((id: string) => {
           const match = products.find((p) => p.id === id)
           if (match) recommendedProducts.push(match)
         })
       }
 
-      const assistantMsg: ChatMessage = {
-        id: `assistant-${Date.now()}`,
-        role: 'assistant',
-        content: data.message || 'Here is what I found for you in our catalog.',
-        timestamp: new Date(),
-        recommendedProducts: recommendedProducts.length > 0 ? recommendedProducts : undefined,
-        suggestedFollowUps: data.suggestedFollowUps || [],
+      if (data && (data.message || data.success)) {
+        const assistantMsg: ChatMessage = {
+          id: `assistant-${Date.now()}`,
+          role: 'assistant',
+          content: data.message || 'Here is what I found for you in our catalog.',
+          timestamp: new Date(),
+          recommendedProducts: recommendedProducts.length > 0 ? recommendedProducts : undefined,
+          suggestedFollowUps: data.suggestedFollowUps || ['Show all products', 'What are the bestsellers?'],
+          apiError: activeApiError || undefined,
+        }
+        setMessages((prev) => [...prev, assistantMsg])
+      } else {
+        throw new Error(activeApiError || 'Failed to get valid response from shopping assistant')
       }
-
-      setMessages((prev) => [...prev, assistantMsg])
     } catch (err: any) {
-      console.warn('AI Assistant error:', err)
+      console.warn('AI Assistant error caught:', err)
+      const errorText = err?.message || String(err)
+      
       const errorMsg: ChatMessage = {
         id: `error-${Date.now()}`,
         role: 'assistant',
-        content: `I'm currently unable to connect to the store assistant. Feel free to browse our full catalog above or try asking again in a moment!`,
+        content: `I found some top-rated suggestions directly from our catalog below so your shopping experience is uninterrupted. Feel free to explore our inventory or add items directly to your cart!`,
         timestamp: new Date(),
+        recommendedProducts: products.slice(0, 3),
         suggestedFollowUps: ['Show all products', 'What are the bestsellers?'],
+        apiError: errorText,
       }
       setMessages((prev) => [...prev, errorMsg])
     } finally {
@@ -355,6 +377,21 @@ export default function AiShoppingAssistant({
                       </div>
                     )}
 
+                    {!isUser && msg.apiError && (
+                      <div className="mb-2.5 p-2.5 bg-red-950/60 border border-red-800/80 rounded-xl text-left text-xs">
+                        <div className="flex items-center gap-1.5 text-red-400 font-semibold text-[11px] mb-1">
+                          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                          <span>Gemini API Status Notice</span>
+                        </div>
+                        <div className="font-mono text-[10px] text-red-300 break-words leading-relaxed bg-black/50 p-2 rounded-lg border border-red-900/50 mb-1.5 select-all">
+                          {msg.apiError}
+                        </div>
+                        <p className="text-[10px] text-neutral-400">
+                          Showing friendly store catalog fallback recommendations below:
+                        </p>
+                      </div>
+                    )}
+
                     {renderFormattedText(msg.content)}
                   </div>
 
@@ -485,12 +522,13 @@ export default function AiShoppingAssistant({
             {/* Loading Indicator */}
             {isLoading && (
               <div className="flex items-start space-x-2">
-                <div className="bg-neutral-950 border border-neutral-800 rounded-2xl rounded-bl-xs p-3.5 text-xs text-neutral-300 flex items-center space-x-2.5">
+                <div className="bg-neutral-950 border border-neutral-800 rounded-2xl rounded-bl-xs p-3.5 text-xs text-neutral-300 flex items-center space-x-2.5 shadow-md">
                   <div className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce" />
                   <div className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.2s]" />
                   <div className="w-2 h-2 rounded-full bg-emerald-400 animate-bounce [animation-delay:0.4s]" />
-                  <span className="text-[11px] text-neutral-400 font-medium pl-1">
-                    Checking live inventory...
+                  <span className="text-[11px] text-neutral-300 font-medium pl-1 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                    Flow AI is thinking &amp; querying store catalog...
                   </span>
                 </div>
               </div>
@@ -514,7 +552,7 @@ export default function AiShoppingAssistant({
                 type="text"
                 value={inputMessage}
                 onChange={(e) => setInputMessage(e.target.value)}
-                placeholder="Ask about products, prices, or recommendations..."
+                placeholder={isLoading ? 'Waiting for assistant response...' : 'Ask about products, prices, or recommendations...'}
                 disabled={isLoading}
                 className="flex-1 px-3.5 py-2.5 bg-neutral-900 border border-neutral-800 rounded-xl text-xs text-white placeholder-neutral-500 focus:outline-none focus:border-emerald-500 transition disabled:opacity-50"
               />
@@ -522,10 +560,14 @@ export default function AiShoppingAssistant({
                 id="ai-shopping-send"
                 type="submit"
                 disabled={!inputMessage.trim() || isLoading}
-                className="p-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-30 disabled:hover:bg-emerald-600 text-white rounded-xl transition shadow-md shadow-emerald-950"
+                className="p-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white rounded-xl transition shadow-md shadow-emerald-950 flex items-center justify-center min-w-[38px] min-h-[38px]"
                 title="Send inquiry"
               >
-                <Send className="w-4 h-4" />
+                {isLoading ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
               </button>
             </form>
           </div>

@@ -27,6 +27,7 @@ export default function MerchantLogin() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
 
   // Already signed in? Skip the form.
   useEffect(() => {
@@ -41,21 +42,37 @@ export default function MerchantLogin() {
 
     setLoading(true);
     setErrorMsg('');
+    setSuccessMsg('');
+
+    console.log('Initiating merchant sign-in for:', email.trim());
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
 
       if (error) {
-        // e.g. "Invalid login credentials" or "Email not confirmed"
-        setErrorMsg(error.message);
+        console.error('Merchant sign-in failed with error:', error);
+        if (error.message?.toLowerCase().includes('email not confirmed')) {
+          setErrorMsg(
+            'Email not confirmed. Please check your inbox and spam folder for your confirmation link, or verify your email address to sign in.'
+          );
+        } else if (error.message?.toLowerCase().includes('invalid login credentials')) {
+          setErrorMsg('Invalid email or password. Please verify your credentials and try again.');
+        } else {
+          setErrorMsg(error.message || 'Sign in failed. Please check your connection and credentials.');
+        }
         return;
       }
 
-      router.push('/dashboard');
+      console.log('Merchant sign-in successful. User ID:', data.user?.id);
+      setSuccessMsg('Signed in successfully! Loading your merchant dashboard...');
+      setTimeout(() => {
+        router.push('/dashboard');
+      }, 600);
     } catch (err) {
+      console.error('Merchant sign-in caught exception:', err);
       setErrorMsg(err instanceof Error ? err.message : 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);
@@ -137,6 +154,14 @@ export default function MerchantLogin() {
               <div className="p-3 my-3 bg-red-950/40 border border-red-800/60 rounded-xl">
                 <p role="alert" style={{ color: '#ef4444', fontSize: '13px', margin: 0 }}>
                   {errorMsg}
+                </p>
+              </div>
+            )}
+
+            {successMsg && (
+              <div className="p-3 my-3 bg-emerald-950/40 border border-emerald-800/60 rounded-xl">
+                <p role="status" style={{ color: '#34d399', fontSize: '13px', margin: 0 }}>
+                  {successMsg}
                 </p>
               </div>
             )}
